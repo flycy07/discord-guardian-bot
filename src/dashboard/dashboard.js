@@ -80,7 +80,7 @@ export function mountDashboard(app, client) {
 
   r.get('/login', (_req, res) => {
     if (!cfg.clientSecret || !cfg.publicUrl || !cfg.clientId) {
-      return res.status(503).send('Dashboard non configurata: imposta CLIENT_ID, DISCORD_CLIENT_SECRET e PUBLIC_URL nel file .env.');
+      return res.status(503).send('Dashboard non configurata: imposta CLIENT_ID, DISCORD_CLIENT_SECRET e PUBLIC_URL nelle variabili d\'ambiente.');
     }
     const state = crypto.randomBytes(16).toString('hex');
     res.cookie('gd_state', state, cookieOpts(10 * 60_000));

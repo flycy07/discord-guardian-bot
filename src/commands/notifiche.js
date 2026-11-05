@@ -60,8 +60,8 @@ export async function execute(i) {
   const platform = i.options.getString('piattaforma');
   if (!platformReady[platform]()) {
     const hint = platform === 'twitch'
-      ? 'Imposta `TWITCH_CLIENT_ID` e `TWITCH_CLIENT_SECRET` nel `.env`.'
-      : 'Imposta `X_BEARER_TOKEN` oppure `X_RSS_BASE` nel `.env`.';
+      ? 'Imposta `TWITCH_CLIENT_ID` e `TWITCH_CLIENT_SECRET` nelle variabili d\'ambiente.'
+      : 'Imposta `X_BEARER_TOKEN` oppure `X_RSS_BASE` nelle variabili d\'ambiente.';
     return i.reply({ content: `❌ ${LABEL[platform]} non è configurato. ${hint}`, ephemeral: true });
   }
   await i.deferReply({ ephemeral: true });

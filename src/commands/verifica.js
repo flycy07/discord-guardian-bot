@@ -64,7 +64,7 @@ export async function execute(i) {
   await channel.send({ embeds: [embed], components: [row] });
 
   const warnings = [];
-  if (!cfg.publicUrl) warnings.push('⚠️ `PUBLIC_URL` non è impostato nel `.env`: il link di verifica non funzionerà.');
+  if (!cfg.publicUrl) warnings.push('⚠️ `PUBLIC_URL` non è impostato nelle variabili d\'ambiente: il link di verifica non funzionerà.');
   if (!cfg.turnstileSite || !cfg.turnstileSecret) warnings.push('ℹ️ Cloudflare Turnstile non configurato: la verifica è un semplice click, facilmente aggirabile dai bot.');
   return i.reply({ content: `✅ Verifica attiva, pannello pubblicato in ${channel}.\n${warnings.join('\n')}`, ephemeral: true });
 }

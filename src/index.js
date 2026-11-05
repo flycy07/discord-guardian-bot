@@ -7,7 +7,7 @@ import { sendWelcome } from './welcome.js';
 import { startNotifier } from './notifications/notifier.js';
 
 if (!cfg.token) {
-  console.error('Manca DISCORD_TOKEN nel file .env (copia .env.example in .env e compilalo).');
+  console.error("Variabile d'ambiente mancante o vuota: DISCORD_TOKEN. Controlla nome e valore nella configurazione dell'hosting.");
   process.exit(1);
 }
 

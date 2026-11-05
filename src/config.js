@@ -1,5 +1,4 @@
-import 'dotenv/config';
-
+// Le impostazioni arrivano SOLO dalle variabili d'ambiente (su Render: scheda "Environment").
 const e = process.env;
 
 export const cfg = {

@@ -33,14 +33,16 @@ Bot Discord in JavaScript (discord.js v14) con tre moduli:
 git clone https://github.com/flycy07/discord-guardian-bot.git
 cd discord-guardian-bot
 npm install
-cp .env.example .env     # poi compila il file .env
-npm run deploy           # registra i comandi slash
-npm start
+cp .env.example .env     # solo per l'uso in locale: compila il file .env
+npm run deploy:local     # registra i comandi slash
+npm run start:local
 ```
 
-Imposta `GUILD_ID` (ID del tuo server) nel `.env` mentre provi: i comandi compaiono subito. Senza, sono globali e Discord può impiegare fino a un'ora.
+Il bot legge la configurazione **solo dalle variabili d'ambiente**. In locale i comandi `*:local` le caricano dal file `.env` (serve Node 20.6+); su un hosting come Render si impostano dal pannello e si usano `npm run deploy` / `npm start`, senza alcun file `.env`.
 
-## 3. Configurazione (`.env`)
+Imposta `GUILD_ID` (ID del tuo server) mentre provi: i comandi compaiono subito. Senza, sono globali e Discord può impiegare fino a un'ora.
+
+## 3. Configurazione (variabili d'ambiente)
 
 | Variabile | Obbligatoria | A cosa serve |
 |---|---|---|

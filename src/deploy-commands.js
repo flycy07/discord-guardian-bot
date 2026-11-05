@@ -2,8 +2,9 @@ import { REST, Routes } from 'discord.js';
 import { cfg } from './config.js';
 import { commands } from './commands/index.js';
 
-if (!cfg.token || !cfg.clientId) {
-  console.error('Imposta DISCORD_TOKEN e CLIENT_ID nel file .env');
+const missing = [['DISCORD_TOKEN', cfg.token], ['CLIENT_ID', cfg.clientId]].filter(([, v]) => !v).map(([k]) => k);
+if (missing.length) {
+  console.error(`Variabili d'ambiente mancanti o vuote: ${missing.join(', ')}. Controlla nome (maiuscolo, con _) e valore nella configurazione dell'hosting.`);
   process.exit(1);
 }
 
