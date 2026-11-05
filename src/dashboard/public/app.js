@@ -159,12 +159,80 @@ function updateAnnouncePreview() {
   renderMessage($('a-preview'), { content: (prefix + a.content).trim(), embed: has ? e : null });
 }
 
+/* ---------- notifiche social ---------- */
+let guildData = { channels: [], roles: [] };
+let notifyReady = {};
+const PLATFORM_LABEL = { twitch: 'Twitch', youtube: 'YouTube', x: 'X' };
+const NOT_READY_HINT = {
+  twitch: 'Twitch non è configurato sul bot: aggiungi TWITCH_CLIENT_ID e TWITCH_CLIENT_SECRET nelle variabili d\'ambiente.',
+  x: 'X non è configurato sul bot: aggiungi X_BEARER_TOKEN oppure X_RSS_BASE nelle variabili d\'ambiente.',
+};
+
+function updatePlatformHint() {
+  const p = $('n-platform').value;
+  const hint = $('n-hint');
+  hint.hidden = notifyReady[p] !== false;
+  hint.textContent = NOT_READY_HINT[p] || '';
+}
+
+const roleChoices = () => [{ id: '', name: 'Nessun ruolo' }, ...guildData.roles];
+
+function subRow(s) {
+  const row = el('div', 'sub-row');
+  const name = el('div');
+  name.append(el('b', '', s.display), el('span', 'muted', ` · ${PLATFORM_LABEL[s.platform] ?? s.platform}`));
+
+  const channels = guildData.channels.some((c) => c.id === s.channelId)
+    ? guildData.channels
+    : [{ id: s.channelId, name: '(canale non disponibile)' }, ...guildData.channels];
+  const ch = document.createElement('select');
+  fillSelect(ch, channels, s.channelId);
+  const role = document.createElement('select');
+  fillSelect(role, roleChoices(), s.roleId || '');
+
+  const save = async () => {
+    try {
+      await api(`/guilds/${guildId}/notifications/${s.id}`, { method: 'PUT', body: { channelId: ch.value, roleId: role.value } });
+      toast('Salvato ✅');
+    } catch (err) { toast(err.message, true); }
+  };
+  ch.addEventListener('change', save);
+  role.addEventListener('change', save);
+
+  const del = Object.assign(el('button', 'btn small', 'Rimuovi'), { type: 'button' });
+  del.addEventListener('click', async () => {
+    if (!confirm(`Smettere di seguire ${s.display}?`)) return;
+    try {
+      await api(`/guilds/${guildId}/notifications/${s.id}`, { method: 'DELETE' });
+      toast('Creator rimosso');
+      await loadNotifications();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  row.append(name, ch, role, del);
+  return row;
+}
+
+async function loadNotifications() {
+  const { subs, ready } = await api(`/guilds/${guildId}/notifications`);
+  notifyReady = ready;
+  updatePlatformHint();
+  const list = $('n-list');
+  list.replaceChildren();
+  if (!subs.length) list.append(el('p', 'muted', 'Nessun creator seguito.'));
+  subs.forEach((s) => list.append(subRow(s)));
+}
+
 /* ---------- caricamento ---------- */
 async function loadGuild(id) {
   guildId = id;
   const g = await api(`/guilds/${id}`);
+  guildData = g;
   fillSelect($('w-channel'), g.channels, g.welcome.channelId);
   fillSelect($('a-channel'), g.channels);
+  fillSelect($('n-channel'), g.channels);
+  fillSelect($('n-role'), roleChoices());
+  loadNotifications().catch((err) => toast(err.message, true));
   const mention = $('a-mention');
   mention.replaceChildren(
     ...[{ id: 'none', name: 'Nessuno' }, { id: 'everyone', name: '@everyone' }, { id: 'here', name: '@here' }, ...g.roles.map((r) => ({ id: `role:${r.id}`, name: r.name }))]
@@ -198,10 +266,33 @@ async function init() {
 document.querySelectorAll('.bar nav button').forEach((b) =>
   b.addEventListener('click', () => {
     document.querySelectorAll('.bar nav button').forEach((x) => x.classList.toggle('active', x === b));
-    $('tab-welcome').hidden = b.dataset.tab !== 'welcome';
-    $('tab-announce').hidden = b.dataset.tab !== 'announce';
+    document.querySelectorAll('.tab').forEach((s) => (s.hidden = s.id !== `tab-${b.dataset.tab}`));
   }),
 );
+
+$('n-platform').addEventListener('change', updatePlatformHint);
+$('notify-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.submitter;
+  btn.disabled = true;
+  try {
+    await api(`/guilds/${guildId}/notifications`, {
+      method: 'POST',
+      body: {
+        platform: $('n-platform').value,
+        creator: $('n-creator').value,
+        channelId: $('n-channel').value,
+        roleId: $('n-role').value,
+        message: $('n-message').value,
+      },
+    });
+    $('n-creator').value = '';
+    $('n-message').value = '';
+    toast('Creator aggiunto ✅');
+    await loadNotifications();
+  } catch (err) { toast(err.message, true); }
+  btn.disabled = false;
+});
 
 $('guild').addEventListener('change', (e) => loadGuild(e.target.value).catch((err) => toast(err.message, true)));
 $('welcome-form').addEventListener('input', updateWelcomePreview);

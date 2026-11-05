@@ -29,6 +29,7 @@
       <nav>
         <button type="button" data-tab="welcome" class="active">Benvenuto</button>
         <button type="button" data-tab="announce">Annunci</button>
+        <button type="button" data-tab="notify">Notifiche</button>
       </nav>
       <a href="/dashboard/logout" class="muted">Esci</a>
     </div>
@@ -99,6 +100,38 @@
         <div class="card">
           <h2>Anteprima</h2>
           <div id="a-preview" class="msg"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- NOTIFICHE SOCIAL -->
+    <section id="tab-notify" class="tab" hidden>
+      <div class="stack">
+        <form id="notify-form" class="card">
+          <h2>Aggiungi un creator</h2>
+          <p class="hint">Il bot avvisa nel canale scelto quando il creator va in live su Twitch, pubblica un video su YouTube o scrive un post su X. Vengono notificati solo i contenuti <strong>nuovi</strong>.</p>
+          <div class="row">
+            <label>Piattaforma
+              <select id="n-platform">
+                <option value="twitch">Twitch (live)</option>
+                <option value="youtube">YouTube (nuovi video)</option>
+                <option value="x">X (nuovi post)</option>
+              </select>
+            </label>
+            <label>Creator <input id="n-creator" maxlength="200" placeholder="nome utente, @handle o link" required></label>
+          </div>
+          <p id="n-hint" class="hint err-text" hidden></p>
+          <div class="row">
+            <label>Canale degli avvisi <select id="n-channel"></select></label>
+            <label>Ruolo da menzionare <select id="n-role"></select></label>
+          </div>
+          <label>Messaggio personalizzato (facoltativo) <input id="n-message" maxlength="500" placeholder="🔴 {nome} è in live! {url}"></label>
+          <p class="hint">Segnaposto: <code>{nome}</code> · <code>{url}</code> · <code>{titolo}</code>. Per YouTube, se non conosci l'@handle puoi incollare l'ID canale (inizia con <code>UC</code>).</p>
+          <div class="actions"><button type="submit" class="btn primary">Aggiungi</button></div>
+        </form>
+        <div class="card">
+          <h2>Creator seguiti</h2>
+          <div id="n-list"></div>
         </div>
       </div>
     </section>

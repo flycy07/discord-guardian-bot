@@ -6,7 +6,7 @@ Bot Discord in JavaScript (discord.js v14) con tre moduli:
 2. **Verifica nuovi membri tramite link esterno**: il nuovo arrivato preme un pulsante, riceve un link personale e monouso a una pagina web ospitata dal bot (con captcha Cloudflare Turnstile opzionale). Solo dopo ottiene il ruolo verificato. Controllo opzionale sull'età minima dell'account.
 3. **Notifiche social**: avvisa il server quando un creator va in **live su Twitch**, pubblica un **video su YouTube** o scrive un **post su X**.
 
-4. **Dashboard web**: gestisci dal browser i **messaggi di benvenuto** e gli **annunci con embed**, con anteprima dal vivo (vedi la sezione *Dashboard*).
+4. **Dashboard web**: gestisci dal browser **messaggi di benvenuto**, **annunci con embed** (con anteprima dal vivo) e **canali delle notifiche social** (vedi la sezione *Dashboard*).
 
 ## Requisiti
 
@@ -128,6 +128,8 @@ Aprila su `PUBLIC_URL/dashboard` (es. `https://nome-servizio.onrender.com/dashbo
 **Cosa puoi fare:**
 - **Benvenuto**: attiva/disattiva, scegli il canale, scrivi il testo e un embed opzionale (titolo, descrizione, colore, immagine, footer, avatar del membro). Segnaposto: `{utente}` `{nome}` `{server}` `{membri}`. Il pulsante *Invia anteprima nel canale* manda il messaggio usando te come nuovo membro.
 - **Annunci**: scegli canale, menzione (nessuna, `@everyone`, `@here` o un ruolo), testo e embed completo (titolo con link, descrizione, colore, autore, immagine, miniatura, footer, fino a 5 campi). Ogni annuncio viene registrato nel canale log.
+
+- **Notifiche**: aggiungi un creator Twitch, YouTube o X scegliendo il **canale** degli avvisi, il ruolo da menzionare e un messaggio personalizzato. Dalla lista puoi cambiare canale e ruolo in qualsiasi momento o rimuovere il creator. Servono le chiavi API della piattaforma nelle variabili d'ambiente (YouTube no); se mancano la dashboard te lo segnala.
 
 Le sessioni restano in memoria: dopo un riavvio del bot devi rifare il login.
 

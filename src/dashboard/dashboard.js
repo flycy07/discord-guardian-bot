@@ -7,6 +7,10 @@ import { cfg } from '../config.js';
 import { getGuild, save } from '../store.js';
 import { logToGuild } from '../log.js';
 import { buildWelcomeMessage, clip, cleanColor, cleanUrl, sanitizeWelcome } from '../welcome.js';
+import { platformReady, resolveTwitch, resolveYouTube, resolveX } from '../notifications/notifier.js';
+
+const RESOLVERS = { twitch: resolveTwitch, youtube: resolveYouTube, x: resolveX };
+const MAX_SUBS = 50;
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 const SESSION_TTL = 12 * 3600 * 1000;
@@ -260,6 +264,76 @@ export function mountDashboard(app, client) {
     } catch (err) {
       res.status(400).json({ error: `Invio non riuscito: ${err.message}` });
     }
+  });
+
+  /* ---------- notifiche social ---------- */
+  const publicSub = (s) => ({ id: s.id, platform: s.platform, display: s.display, channelId: s.channelId, roleId: s.roleId, message: s.message });
+  const validRole = (guild, id) => (id && guild.roles.cache.has(String(id)) && String(id) !== guild.id ? String(id) : null);
+
+  api.get('/guilds/:id/notifications', (req, res) => {
+    const ready = Object.fromEntries(Object.entries(platformReady).map(([k, fn]) => [k, fn()]));
+    res.json({ subs: getGuild(req.guild.id).notify.subs.map(publicSub), ready });
+  });
+
+  api.post('/guilds/:id/notifications', throttle, async (req, res) => {
+    const { guild } = req;
+    const subs = getGuild(guild.id).notify.subs;
+    const platform = String(req.body.platform ?? '');
+    if (!RESOLVERS[platform]) return res.status(400).json({ error: 'Piattaforma non valida' });
+    if (!platformReady[platform]()) return res.status(400).json({ error: 'Piattaforma non configurata sul bot (mancano le chiavi API nelle variabili d\'ambiente)' });
+    const ch = textChannel(guild, req.body.channelId);
+    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove il bot può scrivere' });
+    const creator = clip(req.body.creator, 200);
+    if (!creator) return res.status(400).json({ error: 'Inserisci il nome del creator' });
+    if (subs.length >= MAX_SUBS) return res.status(400).json({ error: `Limite di ${MAX_SUBS} creator raggiunto` });
+
+    let resolved;
+    try {
+      resolved = await RESOLVERS[platform](creator);
+    } catch (err) {
+      return res.status(502).json({ error: `Errore nel contattare la piattaforma: ${err.message}` });
+    }
+    if (!resolved) return res.status(404).json({ error: 'Creator non trovato' });
+    if (subs.some((s) => s.platform === platform && s.ident === resolved.ident && s.channelId === ch.id)) {
+      return res.status(409).json({ error: 'Questo creator è già seguito in quel canale' });
+    }
+
+    const entry = {
+      id: crypto.randomBytes(3).toString('hex'),
+      platform,
+      ident: resolved.ident,
+      display: resolved.display,
+      channelId: ch.id,
+      roleId: validRole(guild, req.body.roleId),
+      message: clip(req.body.message, 500) || null,
+      state: {},
+    };
+    subs.push(entry);
+    save();
+    res.json({ ok: true, sub: publicSub(entry) });
+  });
+
+  api.put('/guilds/:id/notifications/:subId', (req, res) => {
+    const sub = getGuild(req.guild.id).notify.subs.find((s) => s.id === req.params.subId);
+    if (!sub) return res.status(404).json({ error: 'Creator non trovato' });
+    if (req.body.channelId !== undefined) {
+      const ch = textChannel(req.guild, req.body.channelId);
+      if (!ch) return res.status(400).json({ error: 'Canale non valido o senza permessi per il bot' });
+      sub.channelId = ch.id;
+    }
+    if (req.body.roleId !== undefined) sub.roleId = validRole(req.guild, req.body.roleId);
+    if (req.body.message !== undefined) sub.message = clip(req.body.message, 500) || null;
+    save();
+    res.json({ ok: true, sub: publicSub(sub) });
+  });
+
+  api.delete('/guilds/:id/notifications/:subId', (req, res) => {
+    const subs = getGuild(req.guild.id).notify.subs;
+    const idx = subs.findIndex((s) => s.id === req.params.subId);
+    if (idx === -1) return res.status(404).json({ error: 'Creator non trovato' });
+    subs.splice(idx, 1);
+    save();
+    res.json({ ok: true });
   });
 
   api.use((_req, res) => res.status(404).json({ error: 'Non trovato' }));
