@@ -103,10 +103,14 @@ export async function resolveYouTube(input) {
     });
     if (!res.ok) return null;
     const html = await res.text();
+    // Il primo "channelId" della pagina è spesso un canale correlato (es. @MrBeast
+    // finiva su Beast Philanthropy): l'ID del canale richiesto sta in canonical/externalId.
     channelId =
-      html.match(/"channelId":"(UC[\w-]{22})"/)?.[1] ||
+      html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/)?.[1] ||
+      html.match(/"externalId":"(UC[\w-]{22})"/)?.[1] ||
+      html.match(/\/channel\/(UC[\w-]{22})/)?.[1] ||
       html.match(/channel_id=(UC[\w-]{22})/)?.[1] ||
-      html.match(/\/channel\/(UC[\w-]{22})/)?.[1];
+      html.match(/"channelId":"(UC[\w-]{22})"/)?.[1];
   }
   if (!channelId) return null;
   const feed = await fetchYouTubeFeed(channelId).catch(() => null);
