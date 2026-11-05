@@ -1,0 +1,20 @@
+{
+  "name": "discord-guardian-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord con moderazione avanzata (AI), verifica nuovi membri via link esterno e notifiche social (Twitch, YouTube, X)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/deploy-commands.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "fast-xml-parser": "^4.5.0"
+  }
+}
