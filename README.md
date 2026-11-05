@@ -6,6 +6,8 @@ Bot Discord in JavaScript (discord.js v14) con tre moduli:
 2. **Verifica nuovi membri tramite link esterno**: il nuovo arrivato preme un pulsante, riceve un link personale e monouso a una pagina web ospitata dal bot (con captcha Cloudflare Turnstile opzionale). Solo dopo ottiene il ruolo verificato. Controllo opzionale sull'età minima dell'account.
 3. **Notifiche social**: avvisa il server quando un creator va in **live su Twitch**, pubblica un **video su YouTube** o scrive un **post su X**.
 
+4. **Dashboard web**: gestisci dal browser i **messaggi di benvenuto** e gli **annunci con embed**, con anteprima dal vivo (vedi la sezione *Dashboard*).
+
 ## Requisiti
 
 - Node.js 20 o superiore
@@ -47,7 +49,8 @@ Imposta `GUILD_ID` (ID del tuo server) nel `.env` mentre provi: i comandi compai
 | `ANTHROPIC_API_KEY` | no | Attiva la classificazione AI. Senza, restano i controlli anti-spam classici. Chiave da <https://console.anthropic.com> |
 | `AI_MODEL` | no | Modello usato (default `claude-haiku-5-5`, veloce ed economico) |
 | `SAFE_BROWSING_API_KEY` | no | Controllo link con Google Safe Browsing |
-| `PUBLIC_URL` | per la verifica | URL pubblico del bot, es. `https://bot.tuodominio.it` |
+| `PUBLIC_URL` | per verifica e dashboard | URL pubblico del bot, es. `https://bot.tuodominio.it` (su Render: `https://nome-servizio.onrender.com`) |
+| `DISCORD_CLIENT_SECRET` | per la dashboard | Developer Portal → OAuth2 → *Client Secret* (serve per il login con Discord) |
 | `PORT` | no | Porta del server web (default 3000) |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET` | consigliato | Captcha Cloudflare gratuito per la verifica |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | per Twitch | App su <https://dev.twitch.tv/console/apps> |
@@ -111,12 +114,45 @@ All'aggiunta vengono memorizzati i contenuti già esistenti: ricevi avvisi solo 
 - `X_BEARER_TOKEN` se hai un accesso API che consente di leggere i post;
 - `X_RSS_BASE` puntando a un'istanza RSS che gestisci tu (es. RSSHub): il bot richiede `{X_RSS_BASE}/{utente}`.
 
-## 5. Avvio in produzione
+## 5. Dashboard (benvenuto e annunci)
+
+Aprila su `PUBLIC_URL/dashboard` (es. `https://nome-servizio.onrender.com/dashboard`).
+
+**Configurazione una tantum:**
+1. Developer Portal → **OAuth2** → copia il **Client Secret** e mettilo in `DISCORD_CLIENT_SECRET`.
+2. Sempre in OAuth2 → **Redirects** → aggiungi `PUBLIC_URL/dashboard/callback` (identico, senza slash finale) e salva.
+3. Riavvia il bot.
+
+**Accesso:** login con Discord. Vedi solo i server in cui c'è il bot **e** hai il permesso *Gestire il server* (verificato in tempo reale a ogni operazione).
+
+**Cosa puoi fare:**
+- **Benvenuto**: attiva/disattiva, scegli il canale, scrivi il testo e un embed opzionale (titolo, descrizione, colore, immagine, footer, avatar del membro). Segnaposto: `{utente}` `{nome}` `{server}` `{membri}`. Il pulsante *Invia anteprima nel canale* manda il messaggio usando te come nuovo membro.
+- **Annunci**: scegli canale, menzione (nessuna, `@everyone`, `@here` o un ruolo), testo e embed completo (titolo con link, descrizione, colore, autore, immagine, miniatura, footer, fino a 5 campi). Ogni annuncio viene registrato nel canale log.
+
+Le sessioni restano in memoria: dopo un riavvio del bot devi rifare il login.
+
+## 6. Hosting su Render
+
+Non serve il file `.env`: le variabili si inseriscono nel pannello di Render.
+
+1. Su <https://render.com> → **New → Web Service** → collega la repo `discord-guardian-bot`.
+2. Impostazioni:
+   - **Runtime**: Node
+   - **Build Command**: `npm install`
+   - **Start Command**: `node src/deploy-commands.js && node src/index.js`
+3. Scheda **Environment** → aggiungi le variabili della tabella sopra (almeno `DISCORD_TOKEN`, `CLIENT_ID`). `PORT` lo imposta Render da solo: non toccarlo.
+4. Dopo il primo deploy copia l'URL del servizio (`https://….onrender.com`), mettilo in `PUBLIC_URL` e salva (il servizio si riavvia). Usa lo stesso URL per il Redirect della dashboard.
+
+**Attenzione ai limiti del piano gratuito** (controlla le condizioni attuali sul sito di Render):
+- Un Web Service gratuito va in **sospensione dopo un periodo senza richieste HTTP**: il bot risulterà offline finché qualcuno non riapre l'URL. Per tenerlo sempre attivo serve un piano a pagamento oppure un servizio esterno che richiami periodicamente `PUBLIC_URL` (es. UptimeRobot).
+- Il filesystem è **temporaneo**: `data/db.json` (impostazioni, strike, iscrizioni social, benvenuto) si perde a ogni deploy o riavvio. Per conservarlo aggiungi un **Disk** persistente (piani a pagamento), montalo ad esempio su `/var/data` e imposta `DATA_DIR=/var/data`.
+
+## 7. Altri modi di avvio
 
 - **pm2**: `npm i -g pm2 && pm2 start src/index.js --name guardian && pm2 save`
 - **Docker**: `docker build -t guardian . && docker run -d --env-file .env -p 3000:3000 -v guardian-data:/data guardian`
 
-I dati (impostazioni, strike, iscrizioni) sono in `data/db.json`: su hosting con disco effimero monta un volume persistente, altrimenti vengono persi a ogni deploy.
+I dati sono in `data/db.json`: su hosting con disco effimero monta un volume persistente, altrimenti vengono persi a ogni deploy.
 
 ## Privacy e limiti
 
@@ -135,5 +171,7 @@ src/
   moderation/              anti-spam, AI, controllo link
   verification/            pulsante + server web di verifica
   notifications/           Twitch, YouTube, X
+  dashboard/               dashboard web (login Discord, API, pagine in public/)
+  welcome.js               messaggi di benvenuto
   store.js                 salvataggio JSON
 ```

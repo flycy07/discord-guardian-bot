@@ -1,0 +1,269 @@
+import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import { ChannelType, EmbedBuilder, PermissionFlagsBits as P } from 'discord.js';
+import { cfg } from '../config.js';
+import { getGuild, save } from '../store.js';
+import { logToGuild } from '../log.js';
+import { buildWelcomeMessage, clip, cleanColor, cleanUrl, sanitizeWelcome } from '../welcome.js';
+
+const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+const SESSION_TTL = 12 * 3600 * 1000;
+const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
+const secure = cfg.publicUrl.startsWith('https://');
+
+/** sessionId -> { user, exp, lastSend } (in memoria: al riavvio si rifà il login) */
+const sessions = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) if (s.exp < now) sessions.delete(id);
+}, 10 * 60_000).unref();
+
+const readCookie = (req, name) => (req.headers.cookie ?? '').match(new RegExp(`(?:^|;\\s*)${name}=([\\w-]+)`))?.[1] ?? null;
+const getSession = (req) => {
+  const s = sessions.get(readCookie(req, 'gd_session') ?? '');
+  return s && s.exp > Date.now() ? s : null;
+};
+const cookieOpts = (maxAge) => ({ httpOnly: true, sameSite: 'lax', secure, maxAge, path: '/dashboard' });
+
+function textChannel(guild, id, member = null) {
+  const ch = guild.channels.cache.get(String(id ?? ''));
+  if (!ch || !TEXT_TYPES.includes(ch.type)) return null;
+  if (!ch.permissionsFor(guild.members.me)?.has([P.ViewChannel, P.SendMessages, P.EmbedLinks])) return null;
+  if (member && !ch.permissionsFor(member)?.has([P.ViewChannel, P.SendMessages])) return null;
+  return ch;
+}
+
+function buildAnnouncementEmbed(input = {}) {
+  const title = clip(input.title, 256);
+  const description = clip(input.description, 3000);
+  const image = cleanUrl(input.image);
+  const fields = (Array.isArray(input.fields) ? input.fields : [])
+    .slice(0, 5)
+    .map((f) => ({ name: clip(f?.name, 100), value: clip(f?.value, 300), inline: Boolean(f?.inline) }))
+    .filter((f) => f.name && f.value);
+  if (!title && !description && !image && !fields.length) return null;
+
+  const eb = new EmbedBuilder().setColor(cleanColor(input.color));
+  if (title) eb.setTitle(title);
+  if (title && cleanUrl(input.url)) eb.setURL(cleanUrl(input.url));
+  if (description) eb.setDescription(description);
+  if (image) eb.setImage(image);
+  if (cleanUrl(input.thumbnail)) eb.setThumbnail(cleanUrl(input.thumbnail));
+  if (clip(input.authorName, 200)) eb.setAuthor({ name: clip(input.authorName, 200) });
+  if (clip(input.footer, 200)) eb.setFooter({ text: clip(input.footer, 200) });
+  if (fields.length) eb.addFields(fields);
+  return eb;
+}
+
+export function mountDashboard(app, client) {
+  const r = express.Router();
+
+  r.use((_req, res, next) => {
+    res.set(
+      'Content-Security-Policy',
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src https: data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    );
+    next();
+  });
+
+  r.get('/', (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
+  r.use('/static', express.static(PUBLIC, { index: false }));
+
+  /* ---------- login con Discord (OAuth2) ---------- */
+  const redirectUri = `${cfg.publicUrl}/dashboard/callback`;
+
+  r.get('/login', (_req, res) => {
+    if (!cfg.clientSecret || !cfg.publicUrl || !cfg.clientId) {
+      return res.status(503).send('Dashboard non configurata: imposta CLIENT_ID, DISCORD_CLIENT_SECRET e PUBLIC_URL nel file .env.');
+    }
+    const state = crypto.randomBytes(16).toString('hex');
+    res.cookie('gd_state', state, cookieOpts(10 * 60_000));
+    const url = new URL('https://discord.com/oauth2/authorize');
+    url.search = new URLSearchParams({
+      client_id: cfg.clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'identify',
+      state,
+    }).toString();
+    res.redirect(url.toString());
+  });
+
+  r.get('/callback', async (req, res) => {
+    const { code, state } = req.query;
+    if (typeof code !== 'string' || typeof state !== 'string' || state !== readCookie(req, 'gd_state')) {
+      return res.status(400).send('Richiesta non valida. Riprova dal login.');
+    }
+    res.clearCookie('gd_state', { path: '/dashboard' });
+    try {
+      const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        body: new URLSearchParams({
+          client_id: cfg.clientId,
+          client_secret: cfg.clientSecret,
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
+      if (!tokenRes.ok) throw new Error(`token ${tokenRes.status}`);
+      const { access_token } = await tokenRes.json();
+      const meRes = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${access_token}` } });
+      if (!meRes.ok) throw new Error(`utente ${meRes.status}`);
+      const me = await meRes.json();
+
+      const sid = crypto.randomBytes(32).toString('hex');
+      sessions.set(sid, {
+        user: {
+          id: me.id,
+          username: me.global_name || me.username,
+          avatarUrl: me.avatar ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png?size=64` : null,
+        },
+        exp: Date.now() + SESSION_TTL,
+        lastSend: 0,
+      });
+      res.cookie('gd_session', sid, cookieOpts(SESSION_TTL));
+      res.redirect('/dashboard');
+    } catch (err) {
+      console.error('[dashboard] login fallito:', err.message);
+      res.status(502).send('Login non riuscito. Riprova.');
+    }
+  });
+
+  r.get('/logout', (req, res) => {
+    sessions.delete(readCookie(req, 'gd_session') ?? '');
+    res.clearCookie('gd_session', { path: '/dashboard' });
+    res.redirect('/dashboard');
+  });
+
+  /* ---------- API ---------- */
+  const api = express.Router();
+  api.use(express.json({ limit: '100kb' }));
+
+  api.use((req, res, next) => {
+    const s = getSession(req);
+    if (!s) return res.status(401).json({ error: 'Non autenticato' });
+    // protezione CSRF: le richieste che modificano dati devono arrivare dalla nostra pagina
+    if (req.method !== 'GET' && req.get('x-requested-with') !== 'dashboard') {
+      return res.status(403).json({ error: 'Richiesta non valida' });
+    }
+    req.session = s;
+    next();
+  });
+
+  api.get('/me', (req, res) => res.json({ user: req.session.user }));
+
+  api.get('/guilds', async (req, res) => {
+    const out = [];
+    await Promise.all(
+      [...client.guilds.cache.values()].slice(0, 100).map(async (g) => {
+        const m = await g.members.fetch(req.session.user.id).catch(() => null);
+        if (m?.permissions.has(P.ManageGuild)) out.push({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }) });
+      }),
+    );
+    res.json({ guilds: out.sort((a, b) => a.name.localeCompare(b.name)) });
+  });
+
+  // tutto quello che segue riguarda un singolo server: verifica i permessi in tempo reale
+  api.use('/guilds/:id', async (req, res, next) => {
+    const guild = client.guilds.cache.get(req.params.id);
+    if (!guild) return res.status(404).json({ error: 'Server non trovato (il bot è presente?)' });
+    const member = await guild.members.fetch(req.session.user.id).catch(() => null);
+    if (!member?.permissions.has(P.ManageGuild)) return res.status(403).json({ error: 'Ti serve il permesso "Gestire il server"' });
+    req.guild = guild;
+    req.member = member;
+    next();
+  });
+
+  const throttle = (req, res, next) => {
+    if (Date.now() - req.session.lastSend < 3000) return res.status(429).json({ error: 'Aspetta qualche secondo tra un invio e l\'altro' });
+    req.session.lastSend = Date.now();
+    next();
+  };
+
+  api.get('/guilds/:id', (req, res) => {
+    const { guild } = req;
+    const channels = [...guild.channels.cache.values()]
+      .filter((c) => TEXT_TYPES.includes(c.type) && c.permissionsFor(guild.members.me)?.has([P.ViewChannel, P.SendMessages]))
+      .sort((a, b) => a.rawPosition - b.rawPosition)
+      .map((c) => ({ id: c.id, name: `#${c.name}` }));
+    const roles = [...guild.roles.cache.values()]
+      .filter((x) => !x.managed && x.id !== guild.id)
+      .sort((a, b) => b.position - a.position)
+      .map((x) => ({ id: x.id, name: x.name }));
+    res.json({ name: guild.name, channels, roles, welcome: getGuild(guild.id).welcome });
+  });
+
+  api.put('/guilds/:id/welcome', (req, res) => {
+    const w = sanitizeWelcome(req.body);
+    if (w.enabled && !textChannel(req.guild, w.channelId)) {
+      return res.status(400).json({ error: 'Scegli un canale valido dove il bot può scrivere' });
+    }
+    Object.assign(getGuild(req.guild.id).welcome, w);
+    save();
+    res.json({ ok: true });
+  });
+
+  api.post('/guilds/:id/welcome/test', throttle, async (req, res) => {
+    const w = sanitizeWelcome(req.body);
+    const ch = textChannel(req.guild, w.channelId, req.member);
+    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove puoi scrivere' });
+    const msg = buildWelcomeMessage(req.member, w);
+    if (!msg.content && !msg.embeds.length) return res.status(400).json({ error: 'Il messaggio è vuoto' });
+    try {
+      await ch.send(msg); // l'anteprima usa te come "nuovo membro"
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ error: `Invio non riuscito: ${err.message}` });
+    }
+  });
+
+  api.post('/guilds/:id/announce', throttle, async (req, res) => {
+    const { guild, member } = req;
+    const ch = textChannel(guild, req.body.channelId, member);
+    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove puoi scrivere' });
+
+    let prefix = '';
+    const allowed = { parse: [], roles: [], users: [] };
+    const mention = String(req.body.mention ?? 'none');
+    if (mention === 'everyone' || mention === 'here') {
+      if (!member.permissions.has(P.MentionEveryone)) return res.status(403).json({ error: 'Non hai il permesso di menzionare @everyone/@here' });
+      prefix = `@${mention} `;
+      allowed.parse = ['everyone'];
+    } else if (mention.startsWith('role:')) {
+      const role = guild.roles.cache.get(mention.slice(5));
+      if (!role) return res.status(400).json({ error: 'Ruolo non trovato' });
+      if (!role.mentionable && !member.permissions.has(P.MentionEveryone)) return res.status(403).json({ error: 'Quel ruolo non è menzionabile' });
+      prefix = `<@&${role.id}> `;
+      allowed.roles = [role.id];
+    }
+
+    const text = clip(req.body.content, 1800);
+    let embed = null;
+    try {
+      embed = buildAnnouncementEmbed(req.body.embed);
+    } catch (err) {
+      return res.status(400).json({ error: `Embed non valido: ${err.message}` });
+    }
+    const content = `${prefix}${text}`.trim();
+    if (!content && !embed) return res.status(400).json({ error: 'Scrivi un testo o compila l\'embed' });
+
+    try {
+      const sent = await ch.send({ content: content || undefined, embeds: embed ? [embed] : [], allowedMentions: allowed });
+      await logToGuild(guild, getGuild(guild.id), {
+        title: 'Annuncio inviato dalla dashboard',
+        description: `${member} ha pubblicato un annuncio in ${ch}.\n[Vai al messaggio](${sent.url})`,
+      });
+      res.json({ ok: true, url: sent.url });
+    } catch (err) {
+      res.status(400).json({ error: `Invio non riuscito: ${err.message}` });
+    }
+  });
+
+  api.use((_req, res) => res.status(404).json({ error: 'Non trovato' }));
+  r.use('/api', api);
+  app.use('/dashboard', r);
+  console.log(`[dashboard] disponibile su ${cfg.publicUrl}/dashboard${cfg.clientSecret ? '' : ' (manca DISCORD_CLIENT_SECRET: login disattivato)'}`);
+}

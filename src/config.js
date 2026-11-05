@@ -12,6 +12,7 @@ export const cfg = {
   safeBrowsingKey: e.SAFE_BROWSING_API_KEY || null,
 
   publicUrl: (e.PUBLIC_URL || '').replace(/\/+$/, ''),
+  clientSecret: e.DISCORD_CLIENT_SECRET || null, // per il login della dashboard
   port: Number(e.PORT) || 3000,
   turnstileSite: e.TURNSTILE_SITE_KEY || null,
   turnstileSecret: e.TURNSTILE_SECRET || null,

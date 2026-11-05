@@ -24,6 +24,20 @@ const DEFAULTS = () => ({
     minAccountAgeDays: 0,
   },
   notify: { subs: [] },
+  welcome: {
+    enabled: false,
+    channelId: null,
+    content: 'Benvenuto {utente} su **{server}**! 🎉',
+    embed: {
+      enabled: true,
+      title: 'Benvenuto!',
+      description: 'Sei il membro numero {membri}. Leggi le regole e divertiti!',
+      color: '#5865f2',
+      image: '',
+      thumbnailAvatar: true,
+      footer: '',
+    },
+  },
 });
 
 let db = { guilds: {} };

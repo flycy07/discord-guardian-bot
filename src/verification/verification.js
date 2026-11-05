@@ -3,6 +3,7 @@ import express from 'express';
 import { cfg } from '../config.js';
 import { getGuild } from '../store.js';
 import { logToGuild } from '../log.js';
+import { mountDashboard } from '../dashboard/dashboard.js';
 
 const TOKEN_TTL = 15 * 60 * 1000;
 /** token -> { guildId, userId, exp } */
@@ -48,7 +49,7 @@ async function verifyTurnstile(response, ip) {
   }
 }
 
-export function startVerifyServer(client) {
+export function startWebServer(client) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.urlencoded({ extended: false, limit: '10kb' }));
@@ -110,7 +111,9 @@ export function startVerifyServer(client) {
     }
   });
 
-  app.listen(cfg.port, () => console.log(`[verifica] server in ascolto sulla porta ${cfg.port}`));
+  mountDashboard(app, client);
+
+  app.listen(cfg.port, () => console.log(`[web] server in ascolto sulla porta ${cfg.port}`));
 }
 
 /** Click sul pulsante del pannello di verifica. */

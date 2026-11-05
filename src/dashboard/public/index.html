@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Guardian Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+</head>
+<body>
+  <header>
+    <strong>🛡️ Guardian Dashboard</strong>
+    <span id="user" hidden></span>
+  </header>
+
+  <section id="login" class="card center" hidden>
+    <h1>Accedi</h1>
+    <p>Accedi con Discord per gestire i server dove hai il permesso <em>Gestire il server</em> e dove è presente il bot.</p>
+    <a class="btn primary" href="/dashboard/login">Accedi con Discord</a>
+  </section>
+
+  <section id="empty" class="card center" hidden>
+    <p>Il bot non è in nessun server dove hai il permesso <em>Gestire il server</em>.</p>
+    <a class="btn" href="/dashboard/logout">Esci</a>
+  </section>
+
+  <main id="app" hidden>
+    <div class="bar">
+      <label>Server <select id="guild"></select></label>
+      <nav>
+        <button type="button" data-tab="welcome" class="active">Benvenuto</button>
+        <button type="button" data-tab="announce">Annunci</button>
+      </nav>
+      <a href="/dashboard/logout" class="muted">Esci</a>
+    </div>
+
+    <!-- BENVENUTO -->
+    <section id="tab-welcome" class="tab">
+      <div class="grid">
+        <form id="welcome-form" class="card">
+          <h2>Messaggio di benvenuto</h2>
+          <label class="check"><input type="checkbox" id="w-enabled"> Attivo</label>
+          <label>Canale <select id="w-channel"></select></label>
+          <label>Testo <textarea id="w-content" rows="3" maxlength="1800"></textarea></label>
+          <p class="hint">Segnaposto: <code>{utente}</code> (menzione) · <code>{nome}</code> · <code>{server}</code> · <code>{membri}</code></p>
+          <label class="check"><input type="checkbox" id="w-embed-enabled"> Aggiungi un embed</label>
+          <div id="w-embed-box">
+            <label>Titolo <input id="w-title" maxlength="256"></label>
+            <label>Descrizione <textarea id="w-description" rows="4" maxlength="3000"></textarea></label>
+            <div class="row">
+              <label>Colore <input type="color" id="w-color"></label>
+              <label class="check"><input type="checkbox" id="w-avatar"> Avatar del membro come miniatura</label>
+            </div>
+            <label>Immagine (https://…) <input id="w-image" maxlength="500" placeholder="https://"></label>
+            <label>Footer <input id="w-footer" maxlength="200"></label>
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn primary">Salva</button>
+            <button type="button" id="w-test" class="btn">Invia anteprima nel canale</button>
+          </div>
+        </form>
+        <div class="card">
+          <h2>Anteprima</h2>
+          <div id="w-preview" class="msg"></div>
+          <p class="hint">L'anteprima nel canale usa il tuo account come nuovo membro.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ANNUNCI -->
+    <section id="tab-announce" class="tab" hidden>
+      <div class="grid">
+        <form id="announce-form" class="card">
+          <h2>Nuovo annuncio</h2>
+          <label>Canale <select id="a-channel"></select></label>
+          <label>Menziona
+            <select id="a-mention"><option value="none">Nessuno</option></select>
+          </label>
+          <label>Testo sopra l'embed <textarea id="a-content" rows="2" maxlength="1800"></textarea></label>
+          <label>Titolo <input id="a-title" maxlength="256"></label>
+          <label>Link del titolo (https://…) <input id="a-url" maxlength="500" placeholder="https://"></label>
+          <label>Descrizione <textarea id="a-description" rows="5" maxlength="3000"></textarea></label>
+          <div class="row">
+            <label>Colore <input type="color" id="a-color"></label>
+            <label>Autore <input id="a-author" maxlength="200"></label>
+          </div>
+          <label>Immagine grande (https://…) <input id="a-image" maxlength="500" placeholder="https://"></label>
+          <label>Miniatura (https://…) <input id="a-thumbnail" maxlength="500" placeholder="https://"></label>
+          <label>Footer <input id="a-footer" maxlength="200"></label>
+          <fieldset>
+            <legend>Campi (max 5)</legend>
+            <div id="a-fields"></div>
+            <button type="button" id="a-add-field" class="btn small">+ Aggiungi campo</button>
+          </fieldset>
+          <p class="hint">Nel testo puoi usare il markdown di Discord (**grassetto**, *corsivo*, link).</p>
+          <div class="actions">
+            <button type="submit" class="btn primary">Invia annuncio</button>
+          </div>
+        </form>
+        <div class="card">
+          <h2>Anteprima</h2>
+          <div id="a-preview" class="msg"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" role="status"></div>
+  <script type="module" src="/dashboard/static/app.js"></script>
+</body>
+</html>

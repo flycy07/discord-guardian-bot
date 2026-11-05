@@ -2,7 +2,8 @@ import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { cfg } from './config.js';
 import { commands } from './commands/index.js';
 import { handleMessage } from './moderation/moderation.js';
-import { startVerifyServer, handleVerifyButton, onMemberJoin } from './verification/verification.js';
+import { startWebServer, handleVerifyButton, onMemberJoin } from './verification/verification.js';
+import { sendWelcome } from './welcome.js';
 import { startNotifier } from './notifications/notifier.js';
 
 if (!cfg.token) {
@@ -27,7 +28,10 @@ client.once(Events.ClientReady, (c) => {
 });
 
 client.on(Events.MessageCreate, (msg) => handleMessage(msg).catch((e) => console.error('[mod]', e)));
-client.on(Events.GuildMemberAdd, (m) => onMemberJoin(m).catch((e) => console.error('[join]', e)));
+client.on(Events.GuildMemberAdd, (m) => {
+  onMemberJoin(m).catch((e) => console.error('[join]', e));
+  sendWelcome(m).catch((e) => console.error('[benvenuto]', e));
+});
 
 client.on(Events.InteractionCreate, async (i) => {
   try {
@@ -44,7 +48,7 @@ client.on(Events.InteractionCreate, async (i) => {
   }
 });
 
-if (cfg.publicUrl) startVerifyServer(client);
-else console.warn('[verifica] PUBLIC_URL non impostato: il server di verifica non viene avviato.');
+if (cfg.publicUrl) startWebServer(client);
+else console.warn('[web] PUBLIC_URL non impostato: verifica e dashboard non vengono avviate.');
 
 client.login(cfg.token);
