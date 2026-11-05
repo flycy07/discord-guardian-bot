@@ -85,6 +85,33 @@ function textChannel(guild, id, member = null) {
   return ch;
 }
 
+/** Perché un canale non è utilizzabile (null se va bene): serve a dire all'utente la causa vera. */
+function channelProblem(guild, id, member = null) {
+  const ch = guild.channels.cache.get(String(id ?? ''));
+  if (!ch) return 'Canale non trovato: probabilmente è stato eliminato. Scegline un altro.';
+  if (!TEXT_TYPES.includes(ch.type)) return `#${ch.name} non è un canale di testo.`;
+  const perms = ch.permissionsFor(guild.members.me);
+  const missingBot = [
+    ['Vedere il canale', P.ViewChannel],
+    ['Inviare messaggi', P.SendMessages],
+    ['Incorpora link', P.EmbedLinks],
+  ]
+    .filter(([, p]) => !perms?.has(p))
+    .map(([label]) => label);
+  if (missingBot.length) return `Al bot mancano in #${ch.name}: ${missingBot.join(', ')}.`;
+  if (member) {
+    const mine = ch.permissionsFor(member);
+    const missingUser = [
+      ['Vedere il canale', P.ViewChannel],
+      ['Inviare messaggi', P.SendMessages],
+    ]
+      .filter(([, p]) => !mine?.has(p))
+      .map(([label]) => label);
+    if (missingUser.length) return `A te mancano in #${ch.name}: ${missingUser.join(', ')}.`;
+  }
+  return null;
+}
+
 function buildAnnouncementEmbed(input = {}) {
   const title = clip(input.title, 256);
   const description = clip(input.description, 3000);
@@ -276,8 +303,9 @@ export function mountDashboard(app, client) {
 
   api.put('/guilds/:id/welcome', (req, res) => {
     const w = sanitizeWelcome(req.body);
-    if (w.enabled && !textChannel(req.guild, w.channelId)) {
-      return res.status(400).json({ error: 'Scegli un canale valido dove il bot può scrivere' });
+    if (w.enabled) {
+      const problem = channelProblem(req.guild, w.channelId);
+      if (problem) return res.status(400).json({ error: problem });
     }
     Object.assign(getGuild(req.guild.id).welcome, w);
     save();
@@ -287,7 +315,7 @@ export function mountDashboard(app, client) {
   api.post('/guilds/:id/welcome/test', throttle, async (req, res) => {
     const w = sanitizeWelcome(req.body);
     const ch = textChannel(req.guild, w.channelId, req.member);
-    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove puoi scrivere' });
+    if (!ch) return res.status(400).json({ error: channelProblem(req.guild, w.channelId, req.member) ?? 'Canale non utilizzabile' });
     const msg = buildWelcomeMessage(req.member, w);
     if (!msg.content && !msg.embeds.length) return res.status(400).json({ error: 'Il messaggio è vuoto' });
     try {
@@ -301,7 +329,7 @@ export function mountDashboard(app, client) {
   api.post('/guilds/:id/announce', throttle, async (req, res) => {
     const { guild, member } = req;
     const ch = textChannel(guild, req.body.channelId, member);
-    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove puoi scrivere' });
+    if (!ch) return res.status(400).json({ error: channelProblem(guild, req.body.channelId, member) ?? 'Canale non utilizzabile' });
 
     let prefix = '';
     const allowed = { parse: [], roles: [], users: [] };
@@ -356,7 +384,7 @@ export function mountDashboard(app, client) {
     if (!RESOLVERS[platform]) return res.status(400).json({ error: 'Piattaforma non valida' });
     if (!platformReady[platform]()) return res.status(400).json({ error: 'Piattaforma non configurata sul bot (mancano le chiavi API nelle variabili d\'ambiente)' });
     const ch = textChannel(guild, req.body.channelId);
-    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove il bot può scrivere' });
+    if (!ch) return res.status(400).json({ error: channelProblem(guild, req.body.channelId) ?? 'Canale non utilizzabile' });
     const creator = clip(req.body.creator, 200);
     if (!creator) return res.status(400).json({ error: 'Inserisci il nome del creator' });
     if (subs.length >= MAX_SUBS) return res.status(400).json({ error: `Limite di ${MAX_SUBS} creator raggiunto` });
@@ -392,7 +420,7 @@ export function mountDashboard(app, client) {
     if (!sub) return res.status(404).json({ error: 'Creator non trovato' });
     if (req.body.channelId !== undefined) {
       const ch = textChannel(req.guild, req.body.channelId);
-      if (!ch) return res.status(400).json({ error: 'Canale non valido o senza permessi per il bot' });
+      if (!ch) return res.status(400).json({ error: channelProblem(req.guild, req.body.channelId) ?? 'Canale non utilizzabile' });
       sub.channelId = ch.id;
     }
     if (req.body.roleId !== undefined) sub.roleId = validRole(req.guild, req.body.roleId);
