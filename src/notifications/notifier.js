@@ -5,6 +5,9 @@ import { allGuilds, save } from '../store.js';
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
 const UA = 'Mozilla/5.0 (compatible; DiscordGuardianBot/1.0)';
+// Senza timeout una richiesta appesa bloccherebbe per sempre il ciclo (running resta true):
+// il bot non invierebbe più nessuna notifica fino al riavvio.
+const TIMEOUT = 10_000;
 const asArray = (x) => (x == null ? [] : [].concat(x));
 
 export const DEFAULT_MESSAGES = {
@@ -27,6 +30,7 @@ async function twitchToken(force = false) {
   if (!force && twitchAuth.token && Date.now() < twitchAuth.exp) return twitchAuth.token;
   const res = await fetch('https://id.twitch.tv/oauth2/token', {
     method: 'POST',
+    signal: AbortSignal.timeout(TIMEOUT),
     body: new URLSearchParams({
       client_id: cfg.twitchId,
       client_secret: cfg.twitchSecret,
@@ -42,6 +46,7 @@ async function twitchToken(force = false) {
 async function twitchApi(path, retry = true) {
   const res = await fetch(`https://api.twitch.tv/helix${path}`, {
     headers: { 'Client-Id': cfg.twitchId, Authorization: `Bearer ${await twitchToken()}` },
+    signal: AbortSignal.timeout(TIMEOUT),
   });
   if (res.status === 401 && retry) {
     await twitchToken(true);
@@ -100,13 +105,18 @@ export async function resolveYouTube(input) {
     if (!handle) return null;
     const res = await fetch(`https://www.youtube.com/@${encodeURIComponent(handle)}`, {
       headers: { 'User-Agent': UA, 'Accept-Language': 'en', Cookie: 'CONSENT=YES+1; SOCS=CAI' },
+      signal: AbortSignal.timeout(TIMEOUT),
     });
     if (!res.ok) return null;
     const html = await res.text();
+    // Il primo "channelId" della pagina è spesso un canale correlato (es. @MrBeast
+    // finiva su Beast Philanthropy): l'ID del canale richiesto sta in canonical/externalId.
     channelId =
-      html.match(/"channelId":"(UC[\w-]{22})"/)?.[1] ||
+      html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/)?.[1] ||
+      html.match(/"externalId":"(UC[\w-]{22})"/)?.[1] ||
+      html.match(/\/channel\/(UC[\w-]{22})/)?.[1] ||
       html.match(/channel_id=(UC[\w-]{22})/)?.[1] ||
-      html.match(/\/channel\/(UC[\w-]{22})/)?.[1];
+      html.match(/"channelId":"(UC[\w-]{22})"/)?.[1];
   }
   if (!channelId) return null;
   const feed = await fetchYouTubeFeed(channelId).catch(() => null);
@@ -115,7 +125,10 @@ export async function resolveYouTube(input) {
 }
 
 async function fetchYouTubeFeed(channelId) {
-  const res = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`, { headers: { 'User-Agent': UA } });
+  const res = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`, {
+    headers: { 'User-Agent': UA },
+    signal: AbortSignal.timeout(TIMEOUT),
+  });
   if (!res.ok) throw new Error(`YouTube feed ${res.status}`);
   return parser.parse(await res.text()).feed;
 }
@@ -149,7 +162,10 @@ export async function resolveX(input) {
 }
 
 async function xApi(path) {
-  const res = await fetch(`https://api.x.com/2${path}`, { headers: { Authorization: `Bearer ${cfg.xBearer}` } });
+  const res = await fetch(`https://api.x.com/2${path}`, {
+    headers: { Authorization: `Bearer ${cfg.xBearer}` },
+    signal: AbortSignal.timeout(TIMEOUT),
+  });
   if (!res.ok) throw new Error(`X API ${res.status}`);
   return res.json();
 }
@@ -178,7 +194,10 @@ async function checkX(sub, client) {
   }
 
   // Fallback: feed RSS (RSSHub / Nitter)
-  const res = await fetch(`${cfg.xRssBase}/${encodeURIComponent(sub.ident)}`, { headers: { 'User-Agent': UA } });
+  const res = await fetch(`${cfg.xRssBase}/${encodeURIComponent(sub.ident)}`, {
+    headers: { 'User-Agent': UA },
+    signal: AbortSignal.timeout(TIMEOUT),
+  });
   if (!res.ok) throw new Error(`X RSS ${res.status}`);
   const items = asArray(parser.parse(await res.text())?.rss?.channel?.item)
     .map((i) => ({ id: String(i.link ?? i.guid ?? '').match(/status\/(\d+)/)?.[1], text: String(i.title ?? '') }))

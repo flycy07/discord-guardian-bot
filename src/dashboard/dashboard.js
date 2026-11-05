@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -13,9 +14,26 @@ const RESOLVERS = { twitch: resolveTwitch, youtube: resolveYouTube, x: resolveX 
 const MAX_SUBS = 50;
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
 const SESSION_TTL = 12 * 3600 * 1000;
 const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
-const secure = cfg.publicUrl.startsWith('https://');
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const cleanOrigin = (u) => String(u ?? '').trim().replace(/\/+$/, '');
+
+/**
+ * Il redirect_uri deve essere identico a quello che il browser sta usando e a quello
+ * registrato nel Developer Portal: PUBLIC_URL può essere vecchio, avere uno spazio in
+ * coda o uno schema diverso dal dominio reale, e in quel caso Discord risponde
+ * "URI di reindirizzamento OAuth2 non valido". Perciò lo ricaviamo dalla richiesta,
+ * usando PUBLIC_URL solo come ripiego.
+ */
+const requestOrigin = (req) => {
+  const proto = String(req.headers['x-forwarded-proto'] ?? req.protocol ?? 'http').split(',')[0].trim() || 'http';
+  const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '').split(',')[0].trim();
+  return /^[a-z0-9.-]+(:\d+)?$/i.test(host) ? `${proto}://${host}` : cleanOrigin(cfg.publicUrl);
+};
+const redirectUri = (req) => `${requestOrigin(req)}/dashboard/callback`;
 
 /** sessionId -> { user, exp, lastSend } (in memoria: al riavvio si rifà il login) */
 const sessions = new Map();
@@ -24,12 +42,40 @@ setInterval(() => {
   for (const [id, s] of sessions) if (s.exp < now) sessions.delete(id);
 }, 10 * 60_000).unref();
 
-const readCookie = (req, name) => (req.headers.cookie ?? '').match(new RegExp(`(?:^|;\\s*)${name}=([\\w-]+)`))?.[1] ?? null;
+const readCookie = (req, name) => {
+  const raw = (req.headers.cookie ?? '').match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))?.[1];
+  if (raw === undefined) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+};
 const getSession = (req) => {
   const s = sessions.get(readCookie(req, 'gd_session') ?? '');
   return s && s.exp > Date.now() ? s : null;
 };
-const cookieOpts = (maxAge) => ({ httpOnly: true, sameSite: 'lax', secure, maxAge, path: '/dashboard' });
+const cookieOpts = (req, maxAge) => ({
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: requestOrigin(req).startsWith('https://'),
+  maxAge,
+  path: '/dashboard',
+});
+
+/** Pagina d'errore del login: dice sempre quale URL di redirect è stato usato. */
+function loginErrorPage(res, status, title, message, uri = '') {
+  return res
+    .status(status)
+    .type('html')
+    .send(
+      `<!doctype html><html lang="it"><head><meta charset="utf-8"><title>${esc(title)}</title></head><body>
+<h1>${esc(title)}</h1><p>${esc(message)}</p>
+${uri ? `<p>URL di reindirizzamento usato:<br><code>${esc(uri)}</code></p>` : ''}
+<p><a href="/dashboard/login">Riprova il login</a> · <a href="/dashboard">Torna alla dashboard</a></p>
+</body></html>`,
+    );
+}
 
 function textChannel(guild, id, member = null) {
   const ch = guild.channels.cache.get(String(id ?? ''));
@@ -37,6 +83,33 @@ function textChannel(guild, id, member = null) {
   if (!ch.permissionsFor(guild.members.me)?.has([P.ViewChannel, P.SendMessages, P.EmbedLinks])) return null;
   if (member && !ch.permissionsFor(member)?.has([P.ViewChannel, P.SendMessages])) return null;
   return ch;
+}
+
+/** Perché un canale non è utilizzabile (null se va bene): serve a dire all'utente la causa vera. */
+function channelProblem(guild, id, member = null) {
+  const ch = guild.channels.cache.get(String(id ?? ''));
+  if (!ch) return 'Canale non trovato: probabilmente è stato eliminato. Scegline un altro.';
+  if (!TEXT_TYPES.includes(ch.type)) return `#${ch.name} non è un canale di testo.`;
+  const perms = ch.permissionsFor(guild.members.me);
+  const missingBot = [
+    ['Vedere il canale', P.ViewChannel],
+    ['Inviare messaggi', P.SendMessages],
+    ['Incorpora link', P.EmbedLinks],
+  ]
+    .filter(([, p]) => !perms?.has(p))
+    .map(([label]) => label);
+  if (missingBot.length) return `Al bot mancano in #${ch.name}: ${missingBot.join(', ')}.`;
+  if (member) {
+    const mine = ch.permissionsFor(member);
+    const missingUser = [
+      ['Vedere il canale', P.ViewChannel],
+      ['Inviare messaggi', P.SendMessages],
+    ]
+      .filter(([, p]) => !mine?.has(p))
+      .map(([label]) => label);
+    if (missingUser.length) return `A te mancano in #${ch.name}: ${missingUser.join(', ')}.`;
+  }
+  return null;
 }
 
 function buildAnnouncementEmbed(input = {}) {
@@ -72,22 +145,23 @@ export function mountDashboard(app, client) {
     next();
   });
 
-  r.get('/', (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
+  r.get('/', (req, res) => res.type('html').send(INDEX_HTML.replace('{{redirect_uri}}', esc(redirectUri(req)))));
   r.use('/static', express.static(PUBLIC, { index: false }));
 
   /* ---------- login con Discord (OAuth2) ---------- */
-  const redirectUri = `${cfg.publicUrl}/dashboard/callback`;
-
-  r.get('/login', (_req, res) => {
-    if (!cfg.clientSecret || !cfg.publicUrl || !cfg.clientId) {
-      return res.status(503).send('Dashboard non configurata: imposta CLIENT_ID, DISCORD_CLIENT_SECRET e PUBLIC_URL nelle variabili d\'ambiente.');
+  r.get('/login', (req, res) => {
+    if (!cfg.clientId || !cfg.clientSecret) {
+      return res.status(503).send('Dashboard non configurata: imposta CLIENT_ID e DISCORD_CLIENT_SECRET nelle variabili d\'ambiente.');
     }
+    const redirect = redirectUri(req);
     const state = crypto.randomBytes(16).toString('hex');
-    res.cookie('gd_state', state, cookieOpts(10 * 60_000));
+    res.cookie('gd_state', state, cookieOpts(req, 10 * 60_000));
+    // salviamo l'URL esatto usato qui, così lo scambio del codice manda lo stesso valore
+    res.cookie('gd_redirect', redirect, cookieOpts(req, 10 * 60_000));
     const url = new URL('https://discord.com/oauth2/authorize');
     url.search = new URLSearchParams({
       client_id: cfg.clientId,
-      redirect_uri: redirectUri,
+      redirect_uri: redirect,
       response_type: 'code',
       scope: 'identify',
       state,
@@ -97,10 +171,18 @@ export function mountDashboard(app, client) {
 
   r.get('/callback', async (req, res) => {
     const { code, state } = req.query;
-    if (typeof code !== 'string' || typeof state !== 'string' || state !== readCookie(req, 'gd_state')) {
-      return res.status(400).send('Richiesta non valida. Riprova dal login.');
+    if (typeof req.query.error === 'string') {
+      const desc = req.query.error === 'access_denied' ? 'Hai rifiutato l\'accesso su Discord.' : String(req.query.error_description ?? req.query.error);
+      return loginErrorPage(res, 400, 'Accesso annullato', desc);
     }
+    const expectedState = readCookie(req, 'gd_state');
+    if (typeof code !== 'string' || typeof state !== 'string' || !expectedState || state !== expectedState) {
+      return loginErrorPage(res, 400, 'Richiesta non valida', 'Il link di login è scaduto o è stato aperto in un\'altra finestra. Riprova dalla dashboard.');
+    }
+    const savedRedirect = readCookie(req, 'gd_redirect');
+    const redirect = savedRedirect && /^https?:\/\/[^/]+\/dashboard\/callback$/.test(savedRedirect) ? savedRedirect : redirectUri(req);
     res.clearCookie('gd_state', { path: '/dashboard' });
+    res.clearCookie('gd_redirect', { path: '/dashboard' });
     try {
       const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
         method: 'POST',
@@ -109,10 +191,29 @@ export function mountDashboard(app, client) {
           client_secret: cfg.clientSecret,
           grant_type: 'authorization_code',
           code,
-          redirect_uri: redirectUri,
+          redirect_uri: redirect,
         }),
       });
-      if (!tokenRes.ok) throw new Error(`token ${tokenRes.status}`);
+      if (!tokenRes.ok) {
+        let detail = `HTTP ${tokenRes.status}`;
+        try {
+          const j = await tokenRes.json();
+          detail = [j.error, j.error_description].filter(Boolean).join(': ') || detail;
+        } catch {
+          /* risposta non JSON */
+        }
+        console.error(`[dashboard] scambio del codice fallito (${tokenRes.status}): ${detail}`);
+        if (/redirect_uri/i.test(detail)) {
+          return loginErrorPage(
+            res,
+            502,
+            'URL di reindirizzamento non registrato',
+            'Discord ha rifiutato questo URL. Aggiungilo identico (stesso schema, host e porta, senza slash finale) in Developer Portal → OAuth2 → Redirects e riprova.',
+            redirect,
+          );
+        }
+        return loginErrorPage(res, 502, 'Login non riuscito', `Discord ha rifiutato il codice di accesso: ${detail}. Controlla CLIENT_ID, DISCORD_CLIENT_SECRET e l'URL di redirect, poi riprova.`, redirect);
+      }
       const { access_token } = await tokenRes.json();
       const meRes = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${access_token}` } });
       if (!meRes.ok) throw new Error(`utente ${meRes.status}`);
@@ -128,11 +229,11 @@ export function mountDashboard(app, client) {
         exp: Date.now() + SESSION_TTL,
         lastSend: 0,
       });
-      res.cookie('gd_session', sid, cookieOpts(SESSION_TTL));
+      res.cookie('gd_session', sid, cookieOpts(req, SESSION_TTL));
       res.redirect('/dashboard');
     } catch (err) {
       console.error('[dashboard] login fallito:', err.message);
-      res.status(502).send('Login non riuscito. Riprova.');
+      loginErrorPage(res, 502, 'Login non riuscito', `Non sono riuscito a completare il login: ${err.message}. Riprova.`, redirect);
     }
   });
 
@@ -202,8 +303,9 @@ export function mountDashboard(app, client) {
 
   api.put('/guilds/:id/welcome', (req, res) => {
     const w = sanitizeWelcome(req.body);
-    if (w.enabled && !textChannel(req.guild, w.channelId)) {
-      return res.status(400).json({ error: 'Scegli un canale valido dove il bot può scrivere' });
+    if (w.enabled) {
+      const problem = channelProblem(req.guild, w.channelId);
+      if (problem) return res.status(400).json({ error: problem });
     }
     Object.assign(getGuild(req.guild.id).welcome, w);
     save();
@@ -213,7 +315,7 @@ export function mountDashboard(app, client) {
   api.post('/guilds/:id/welcome/test', throttle, async (req, res) => {
     const w = sanitizeWelcome(req.body);
     const ch = textChannel(req.guild, w.channelId, req.member);
-    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove puoi scrivere' });
+    if (!ch) return res.status(400).json({ error: channelProblem(req.guild, w.channelId, req.member) ?? 'Canale non utilizzabile' });
     const msg = buildWelcomeMessage(req.member, w);
     if (!msg.content && !msg.embeds.length) return res.status(400).json({ error: 'Il messaggio è vuoto' });
     try {
@@ -227,7 +329,7 @@ export function mountDashboard(app, client) {
   api.post('/guilds/:id/announce', throttle, async (req, res) => {
     const { guild, member } = req;
     const ch = textChannel(guild, req.body.channelId, member);
-    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove puoi scrivere' });
+    if (!ch) return res.status(400).json({ error: channelProblem(guild, req.body.channelId, member) ?? 'Canale non utilizzabile' });
 
     let prefix = '';
     const allowed = { parse: [], roles: [], users: [] };
@@ -282,7 +384,7 @@ export function mountDashboard(app, client) {
     if (!RESOLVERS[platform]) return res.status(400).json({ error: 'Piattaforma non valida' });
     if (!platformReady[platform]()) return res.status(400).json({ error: 'Piattaforma non configurata sul bot (mancano le chiavi API nelle variabili d\'ambiente)' });
     const ch = textChannel(guild, req.body.channelId);
-    if (!ch) return res.status(400).json({ error: 'Scegli un canale valido dove il bot può scrivere' });
+    if (!ch) return res.status(400).json({ error: channelProblem(guild, req.body.channelId) ?? 'Canale non utilizzabile' });
     const creator = clip(req.body.creator, 200);
     if (!creator) return res.status(400).json({ error: 'Inserisci il nome del creator' });
     if (subs.length >= MAX_SUBS) return res.status(400).json({ error: `Limite di ${MAX_SUBS} creator raggiunto` });
@@ -318,7 +420,7 @@ export function mountDashboard(app, client) {
     if (!sub) return res.status(404).json({ error: 'Creator non trovato' });
     if (req.body.channelId !== undefined) {
       const ch = textChannel(req.guild, req.body.channelId);
-      if (!ch) return res.status(400).json({ error: 'Canale non valido o senza permessi per il bot' });
+      if (!ch) return res.status(400).json({ error: channelProblem(req.guild, req.body.channelId) ?? 'Canale non utilizzabile' });
       sub.channelId = ch.id;
     }
     if (req.body.roleId !== undefined) sub.roleId = validRole(req.guild, req.body.roleId);
@@ -339,10 +441,12 @@ export function mountDashboard(app, client) {
   api.use((_req, res) => res.status(404).json({ error: 'Non trovato' }));
   r.use('/api', api);
   app.use('/dashboard', r);
-  const missing = [!cfg.publicUrl && 'PUBLIC_URL', !cfg.clientId && 'CLIENT_ID', !cfg.clientSecret && 'DISCORD_CLIENT_SECRET'].filter(Boolean);
-  console.log(
-    missing.length
-      ? `[dashboard] login disattivato: mancano ${missing.join(', ')}`
-      : `[dashboard] disponibile su ${cfg.publicUrl}/dashboard`,
-  );
+  const missing = [!cfg.clientId && 'CLIENT_ID', !cfg.clientSecret && 'DISCORD_CLIENT_SECRET'].filter(Boolean);
+  if (missing.length) {
+    console.log(`[dashboard] login disattivato: mancano ${missing.join(', ')}`);
+  } else {
+    const base = cleanOrigin(cfg.publicUrl) || `http://localhost:${cfg.port}`;
+    console.log(`[dashboard] disponibile su ${base}/dashboard`);
+    console.log(`[dashboard] URL da registrare nel Developer Portal (OAuth2 → Redirects): ${base}/dashboard/callback`);
+  }
 }
