@@ -48,7 +48,8 @@ client.on(Events.InteractionCreate, async (i) => {
   }
 });
 
-if (cfg.publicUrl) startWebServer(client);
-else console.warn('[web] PUBLIC_URL non impostato: verifica e dashboard non vengono avviate.');
+// Il server web parte sempre: gli hosting come Render richiedono una porta aperta.
+if (!cfg.publicUrl) console.warn('[web] PUBLIC_URL non impostato: verifica e dashboard non funzioneranno finché non lo imposti.');
+startWebServer(client);
 
 client.login(cfg.token);

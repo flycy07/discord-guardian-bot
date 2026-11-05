@@ -339,5 +339,10 @@ export function mountDashboard(app, client) {
   api.use((_req, res) => res.status(404).json({ error: 'Non trovato' }));
   r.use('/api', api);
   app.use('/dashboard', r);
-  console.log(`[dashboard] disponibile su ${cfg.publicUrl}/dashboard${cfg.clientSecret ? '' : ' (manca DISCORD_CLIENT_SECRET: login disattivato)'}`);
+  const missing = [!cfg.publicUrl && 'PUBLIC_URL', !cfg.clientId && 'CLIENT_ID', !cfg.clientSecret && 'DISCORD_CLIENT_SECRET'].filter(Boolean);
+  console.log(
+    missing.length
+      ? `[dashboard] login disattivato: mancano ${missing.join(', ')}`
+      : `[dashboard] disponibile su ${cfg.publicUrl}/dashboard`,
+  );
 }
