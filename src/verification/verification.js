@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import { cfg } from '../config.js';
-import { getGuild } from '../store.js';
+import { allGuilds, getGuild } from '../store.js';
 import { logToGuild } from '../log.js';
 import { mountDashboard } from '../dashboard/dashboard.js';
+import { pollerStatus } from '../notifications/notifier.js';
 
 const TOKEN_TTL = 15 * 60 * 1000;
 /** token -> { guildId, userId, exp } */
@@ -59,6 +60,19 @@ export function startWebServer(client) {
   });
 
   app.get('/', (_req, res) => res.send('ok'));
+
+  // Stato sintetico: dice subito se il bot è connesso, quante sottoscrizioni esistono
+  // e se il ciclo delle notifiche gira. Nessun dato sensibile (niente ID o token).
+  app.get('/status', (_req, res) => {
+    const subscriptions = allGuilds().reduce((n, [, g]) => n + g.notify.subs.length, 0);
+    res.json({
+      online: Boolean(client.isReady?.()),
+      bot: client.user?.tag ?? null,
+      guilds: client.guilds.cache.size,
+      subscriptions,
+      poller: pollerStatus,
+    });
+  });
 
   app.get('/verify/:token', (req, res) => {
     const t = tokens.get(req.params.token);

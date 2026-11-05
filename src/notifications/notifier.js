@@ -237,24 +237,39 @@ async function announce(client, sub, { url, titolo = '', embed = null }) {
 const checkers = { twitch: checkTwitch, youtube: checkYouTube, x: checkX };
 let running = false;
 
+/** Stato del ciclo di controllo, esposto da /status (nessun dato sensibile). */
+export const pollerStatus = { lastCheck: null, checked: 0, errors: 0, lastError: null, running: false };
+
 async function tick(client) {
   if (running) return;
   running = true;
+  pollerStatus.running = true;
+  let checked = 0;
+  let errors = 0;
+  let lastError = null;
   try {
     for (const [, g] of allGuilds()) {
       for (const sub of g.notify.subs) {
         if (!platformReady[sub.platform]()) continue;
         sub.state ??= {};
+        checked += 1;
         try {
           await checkers[sub.platform](sub, client);
         } catch (err) {
-          console.warn(`[notifiche] ${sub.platform}/${sub.ident}: ${err.message}`);
+          errors += 1;
+          lastError = `${sub.platform}/${sub.ident}: ${err.message}`;
+          console.warn(`[notifiche] ${lastError}`);
         }
       }
     }
     save();
   } finally {
     running = false;
+    pollerStatus.running = false;
+    pollerStatus.lastCheck = Date.now();
+    pollerStatus.checked = checked;
+    pollerStatus.errors = errors;
+    if (lastError) pollerStatus.lastError = lastError;
   }
 }
 
